@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A股分析系统 - 控制台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <style>
+        body { background: #0f1419; color: #e7e9ea; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+        .card { background: #192734; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+        .metric { font-size: 2rem; font-weight: bold; }
+        .positive { color: #00ba7c; }
+        .negative { color: #ff4444; }
+        .tab { padding: 8px 16px; cursor: pointer; border-radius: 6px; display: inline-block; }
+        .tab.active { background: #22303c; }
+        #sectorChart { height: 300px; }
+    </style>
+</head>
+<body>
+    <div class="max-w-7xl mx-auto p-4">
+        <header class="flex justify-between items-center mb-6">
+            <h1 class="text-2xl font-bold">📈 A股分析系统</h1>
+            <span class="text-gray-400" id="clock"></span>
+        </header>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="card">
+                <div class="text-gray-400 text-sm">上证指数</div>
+                <div class="metric" id="sh-price">--</div>
+                <div class="text-sm" id="sh-change">--</div>
+            </div>
+            <div class="card">
+                <div class="text-gray-400 text-sm">深证成指</div>
+                <div class="metric" id="sz-price">--</div>
+                <div class="text-sm" id="sz-change">--</div>
+            </div>
+            <div class="card">
+                <div class="text-gray-400 text-sm">创业板</div>
+                <div class="metric" id="cy-price">--</div>
+                <div class="text-sm" id="cy-change">--</div>
+            </div>
+            <div class="card">
+                <div class="text-gray-400 text-sm">北向资金</div>
+                <div class="metric positive" id="north-money">--</div>
+                <div class="text-sm text-gray-400">亿</div>
+            </div>
+        </div>
+
+        <div class="flex gap-2 mb-4">
+            <div class="tab active" id="tab-btn-sector" onclick="showTab('sector')">🏭 板块</div>
+            <div class="tab" id="tab-btn-portfolio" onclick="showTab('portfolio')">💼 持仓</div>
+            <div class="tab" id="tab-btn-backtest" onclick="showTab('backtest')">🔁 回测</div>
+        </div>
+
+        <div id="tab-sector" class="card">
+            <h2 class="text-lg font-bold mb-4">板块涨跌排行</h2>
+            <div id="sectorChart"></div>
+        </div>
+
+        <div id="tab-portfolio" class="card" style="display:none">
+            <h2 class="text-lg font-bold mb-4">我的持仓</h2>
+            <table class="w-full text-left">
+                <thead><tr class="text-gray-400"><th>代码</th><th>名称</th><th>持仓</th><th>成本</th><th>现价</th><th>市值</th><th>浮动盈亏</th></tr></thead>
+                <tbody id="portfolio-body"></tbody>
+            </table>
+        </div>
+
+        <div id="tab-backtest" class="card" style="display:none">
+            <h2 class="text-lg font-bold mb-4">策略回测</h2>
+            <div class="flex gap-4 mb-4">
+                <input type="text" id="bt-code" placeholder="股票代码" value="000001" class="bg-gray-800 text-white px-3 py-2 rounded">
+                <button onclick="runBacktest()" class="bg-blue-600 px-4 py-2 rounded hover:bg-blue-700">运行回测</button>
+            </div>
+            <div id="bt-results" class="grid grid-cols-4 gap-4"></div>
+        </div>
+    </div>
+
+    <script>
+        function updateClock() {
+            document.getElementById('clock').textContent = new Date().toLocaleString('zh-CN');
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        async function loadMarket() {
+            try {
+                const res = await fetch('/api/market');
+                const json = await res.json();
+                if (json.success) {
+                    const sh = json.data.shanghai;
+                    document.getElementById('sh-price').textContent = sh.price.toFixed(2);
+                    const shc = document.getElementById('sh-change');
+                    shc.textContent = (sh.change >= 0 ? '+' : '') + sh.change.toFixed(2) + '%';
+                    shc.className = 'text-sm ' + (sh.change >= 0 ? 'positive' : 'negative');
+                }
+            } catch(e) { console.log(e); }
+        }
+
+        async function loadSectorChart() {
+            try {
+                const res = await fetch('/api/sector');
+                const json = await res.json();
+                if (json.success) {
+                    const chart = echarts.init(document.getElementById('sectorChart'));
+                    chart.setOption({
+                        yAxis: { type: 'category', data: json.data.map(s => s.industry), axisLabel: { color: '#e7e9ea', fontSize: 11 } },
+                        xAxis: { type: 'value', axisLabel: { color: '#e7e9ea' } },
+                        series: [{ type: 'bar', data: json.data.map(s => ({ value: s.avg_change, itemStyle: { color: s.avg_change >= 0 ? '#00ba7c' : '#ff4444' } })) }],
+                        tooltip: { trigger: 'axis' },
+                        grid: { left: '15%' },
+                    });
+                }
+            } catch(e) { console.log(e); }
+        }
+
+        async function loadPortfolio() {
+            try {
+                const res = await fetch('/api/portfolio');
+                const json = await res.json();
+                if (json.success) {
+                    const tbody = document.getElementById('portfolio-body');
+                    if (!json.data.length) {
+                        tbody.innerHTML = '<tr><td colspan="7" class="text-gray-400">暂无持仓</td></tr>';
+                        return;
+                    }
+                    tbody.innerHTML = json.data.map(p => `
+                        <tr class="border-t border-gray-700">
+                            <td>${p.code}</td><td>${p.name}</td><td>${p.shares}</td>
+                            <td>${p.avg_cost.toFixed(2)}</td><td>${p.current_price.toFixed(2)}</td>
+                            <td>${p.market_value.toFixed(2)}</td>
+                            <td class="${p.floating_pnl >= 0 ? 'positive' : 'negative'}">${p.floating_pnl >= 0 ? '+' : ''}${p.floating_pnl.toFixed(2)}</td>
+                        </tr>`).join('');
+                }
+            } catch(e) { console.log(e); }
+        }
+
+        function runBacktest() {
+            const code = document.getElementById('bt-code').value;
+            fetch('/api/backtest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) })
+                .then(r => r.json())
+                .then(json => {
+                    if (json.success) {
+                        const d = json.data;
+                        document.getElementById('bt-results').innerHTML = `
+                            <div class="bg-gray-800 p-4 rounded"><div class="text-gray-400">总收益</div><div class="metric ${d.total_return>=0?'positive':'negative'}">${d.total_return.toFixed(1)}%</div></div>
+                            <div class="bg-gray-800 p-4 rounded"><div class="text-gray-400">年化收益</div><div class="metric ${d.annualized_return>=0?'positive':'negative'}">${d.annualized_return.toFixed(1)}%</div></div>
+                            <div class="bg-gray-800 p-4 rounded"><div class="text-gray-400">胜率</div><div class="metric">${d.win_rate.toFixed(1)}%</div></div>
+                            <div class="bg-gray-800 p-4 rounded"><div class="text-gray-400">最大回撤</div><div class="metric negative">${d.max_drawdown.toFixed(1)}%</div></div>`;
+                    } else {
+                        document.getElementById('bt-results').innerHTML = '<div class="text-red-400">回测失败: ' + json.error + '</div>';
+                    }
+                });
+        }
+
+        function showTab(name) {
+            document.querySelectorAll('[id^="tab-"]').forEach(el => { if (el.id !== 'tab-' + name) el.style.display = 'none'; });
+            document.getElementById('tab-' + name).style.display = 'block';
+            document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-btn-' + name).classList.add('active');
+        }
+
+        loadMarket();
+        loadSectorChart();
+        loadPortfolio();
+        setInterval(loadMarket, 30000);
+    </script>
+</body>
+</html>
