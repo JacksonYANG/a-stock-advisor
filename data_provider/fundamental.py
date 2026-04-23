@@ -111,10 +111,10 @@ class FundamentalFetcher:
                 if rows:
                     row = rows[0]
                     # fields: code, pubDate, statDate, roeAvg, npMargin, gpMargin, netProfit, epsTTM, MBRevenue, totalShare, liqaShare
-                    data.roe = float(row[3] or 0) * 100  # roeAvg 是小数转百分比
+                    data.roe = float(row[3] or 0) * 100  # roeAvg
                     data.net_margin = float(row[4] or 0) * 100  # npMargin
                     data.gross_margin = float(row[5] or 0) * 100 if row[5] else 0.0
-                    data.eps = float(row[8] or 0)  # epsTTM
+                    data.eps = float(row[7] or 0)  # epsTTM
                     # 每股净资产 = 总股本市值 / 股本数 (间接)
                     total_share = float(row[9] or 0)  # 总股本
                     liqa_share = float(row[10] or 0)  # 流通股本
