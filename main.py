@@ -1688,6 +1688,60 @@ def hot_money_groups():
 
 
 @cli.command()
+def report():
+    """📄 生成PDF分析报告"""
+    from analyzer.report_generator import get_report_generator
+
+    console.print(f"[bold cyan]📄 生成分析报告中...[/bold cyan]")
+
+    gen = get_report_generator()
+    filepath = gen.generate_daily_report()
+
+    if filepath:
+        console.print(f"[green]✓ 报告已生成: {filepath}[/green]")
+    else:
+        console.print("[yellow]报告生成失败（需安装 fpdf2: pip install fpdf2）[/yellow]")
+
+
+@cli.command()
+def portfolio_analysis():
+    """📈 组合持仓分析"""
+    from analyzer.portfolio_analyzer import get_portfolio_analyzer
+    from rich.panel import Panel
+
+    console.print(f"[bold cyan]📈 组合分析中...[/bold cyan]")
+
+    analyzer = get_portfolio_analyzer()
+    metrics = analyzer.analyze()
+
+    if metrics.position_count == 0:
+        console.print("[yellow]当前无持仓[/yellow]")
+        return
+
+    pnl_color = "green" if metrics.total_pnl >= 0 else "red"
+
+    console.print(Panel(
+        f"[bold]持仓数量: {metrics.position_count}[/bold]\n\n"
+        f"总市值: {metrics.total_value:,.2f}\n"
+        f"总成本: {metrics.total_cost:,.2f}\n"
+        f"总盈亏: [{pnl_color}]{metrics.total_pnl:+,.2f}[/{pnl_color}] ({metrics.total_pnl_pct:+.2f}%)\n\n"
+        f"夏普比率: {metrics.sharpe_ratio:.2f}\n"
+        f"索提诺比率: {metrics.sortino_ratio:.2f}\n"
+        f"最大回撤: [red]{metrics.max_drawdown:.2f}%[/red]\n"
+        f"集中度: {metrics.concentration:.1%}\n"
+        f"分散化评分: {metrics.diversification_score:.0f}/100",
+        title="Portfolio Analysis",
+        border_style="cyan",
+    ))
+
+    # 相关性矩阵
+    corr = analyzer.get_correlation_matrix()
+    if corr is not None and not corr.empty:
+        console.print(f"\n[bold]相关性矩阵[/bold]")
+        console.print(str(corr.round(2)))
+
+
+@cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
     from analyzer.telegram_notifier import TelegramNotifier
