@@ -718,6 +718,85 @@ def screen(roe_min, profit_growth_min, net_margin_min, gross_margin_min, limit):
 
 
 @cli.command()
+@click.option("--top", "-n", type=int, default=20, help="显示前N个板块")
+def sector(top):
+    """🏭 板块涨跌排行"""
+    from data_provider.sector import get_sector_fetcher
+
+    console.print(f"[bold cyan]🏭 行业板块涨跌排行[/bold cyan]")
+
+    fetcher = get_sector_fetcher()
+    sectors = fetcher.get_all_sectors()
+
+    if not sectors:
+        console.print("[yellow]无法获取板块数据[/yellow]")
+        return
+
+    table = Table(title=f"板块涨跌 (前{min(top, len(sectors))}名)", show_header=True, header_style="bold magenta")
+    table.add_column("行业", style="cyan")
+    table.add_column("股票数", justify="right")
+    table.add_column("平均涨跌", justify="right")
+    table.add_column("上涨", justify="right", style="green")
+    table.add_column("下跌", justify="right", style="red")
+    table.add_column("涨停", justify="right", style="red")
+    table.add_column("龙头", style="yellow")
+    table.add_column("龙头涨幅", justify="right")
+
+    for s in sectors[:top]:
+        change_color = "green" if s["avg_change"] > 0 else "red"
+        table.add_row(
+            s["industry"],
+            str(s["stock_count"]),
+            f"[{change_color}]{s['avg_change']:+.2f}%[/{change_color}]",
+            str(s["up_count"]),
+            str(s["down_count"]),
+            str(s["limit_up_count"]),
+            s["lead_stock"],
+            f"{s['lead_change']:+.2f}%" if s["lead_change"] != -999.0 else "N/A",
+        )
+
+    console.print(table)
+
+
+@cli.command()
+@click.option("--industry", "-i", required=True, help="行业名称")
+def sector_stocks(industry):
+    """📋 查看板块成分股"""
+    from data_provider.sector import get_sector_fetcher
+    from data_provider.base import DataFetcherManager
+
+    fetcher = get_sector_fetcher()
+    stocks = fetcher.get_sector_stocks(industry)
+
+    if not stocks:
+        console.print(f"[yellow]未找到行业: {industry}[/yellow]")
+        return
+
+    manager = DataFetcherManager()
+    manager.register_sources(["baostock"])
+
+    table = Table(title=f"{industry} 成分股", show_header=True, header_style="bold magenta")
+    table.add_column("代码", style="cyan")
+    table.add_column("名称")
+    table.add_column("现价", justify="right")
+    table.add_column("涨跌幅", justify="right")
+
+    for s in stocks:
+        try:
+            quote = manager.get_quote(s["code"])
+            if quote:
+                chg = quote.change_pct
+                color = "green" if chg > 0 else "red" if chg < 0 else "white"
+                table.add_row(s["code"], s["name"], f"{quote.current_price:.2f}", f"[{color}]{chg:+.2f}%[/{color}]")
+            else:
+                table.add_row(s["code"], s["name"], "N/A", "N/A")
+        except:
+            table.add_row(s["code"], s["name"], "N/A", "N/A")
+
+    console.print(table)
+
+
+@cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
     from analyzer.telegram_notifier import TelegramNotifier
