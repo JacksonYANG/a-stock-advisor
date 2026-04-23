@@ -797,6 +797,68 @@ def sector_stocks(industry):
 
 
 @cli.command()
+@click.option("--days", "-d", type=int, default=5, help="历史天数")
+def north_money(days):
+    """💰 北向资金追踪"""
+    from data_provider.north_money import get_north_money_fetcher
+
+    console.print(f"[bold cyan]💰 沪深港通北向资金[/bold cyan]")
+
+    fetcher = get_north_money_fetcher()
+    history = fetcher.get_history(days)
+
+    if not history:
+        console.print("[yellow]无法获取北向资金数据（需配置Tushare Token）[/yellow]")
+        return
+
+    latest = history[0]
+    console.print(Panel(
+        f"[bold]日期: {latest.date}[/bold]\n\n"
+        f"沪股通净买入: [green]{latest.hgt_shanghai:+,+.2f}亿[/green]\n"
+        f"深股通净买入: [green]{latest.sgt_shenzhen:+,+.2f}亿[/green]\n"
+        f"合计净买入:  [bold green]{latest.total:+,+.2f}亿[/bold green]",
+        title="今日北向资金",
+        border_style="cyan",
+    ))
+
+    table = Table(title=f"近{len(history)}日北向资金趋势", show_header=True, header_style="bold magenta")
+    table.add_column("日期", style="cyan")
+    table.add_column("沪股通(亿)", justify="right")
+    table.add_column("深股通(亿)", justify="right")
+    table.add_column("合计(亿)", justify="right")
+
+    for d in history:
+        color = "green" if d.total > 0 else "red"
+        table.add_row(
+            d.date,
+            f"{d.hgt_shanghai:+,+.2f}",
+            f"{d.sgt_shenzhen:+,+.2f}",
+            f"[{color}]{d.total:+,+.2f}[/{color}]",
+        )
+
+    console.print(table)
+
+    if latest.top_stocks:
+        top10 = sorted(latest.top_stocks, key=lambda x: x.get("net_amount", 0), reverse=True)[:10]
+        t = Table(title="北向资金个股TOP10", show_header=True, header_style="bold magenta")
+        t.add_column("代码", style="cyan")
+        t.add_column("名称")
+        t.add_column("净买入(亿)", justify="right", style="green")
+        t.add_column("买入(亿)", justify="right")
+        t.add_column("卖出(亿)", justify="right")
+
+        for s in top10:
+            t.add_row(
+                s.get("code", ""),
+                s.get("name", ""),
+                f"{s.get('net_amount', 0):+,+.3f}",
+                f"{s.get('buy_amount', 0):+.3f}",
+                f"{s.get('sell_amount', 0):+.3f}",
+            )
+        console.print(t)
+
+
+@cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
     from analyzer.telegram_notifier import TelegramNotifier
