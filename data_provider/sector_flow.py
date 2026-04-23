@@ -11,6 +11,8 @@ from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from datetime import datetime
 
+from data_provider.industry import get_stock_industry
+
 
 @dataclass
 class SectorFlowData:
@@ -25,47 +27,6 @@ class SectorFlowData:
 
 class SectorFlowFetcher:
     """板块资金流向获取器"""
-
-    def __init__(self):
-        self._logged_in = False
-        self._industry_cache: Dict[str, str] = {}
-
-    def _login(self):
-        if not self._logged_in:
-            bs.login()
-            self._logged_in = True
-
-    def _logout(self):
-        if self._logged_in:
-            bs.logout()
-            self._logged_in = False
-
-    def _normalize_code(self, code: str) -> str:
-        code = code.strip().zfill(6)
-        if code.startswith(("6", "5", "9")):
-            return f"sh.{code}"
-        elif code.startswith(("0", "3")):
-            return f"sz.{code}"
-        elif code.startswith(("4", "8")):
-            return f"bj.{code}"
-        return f"sz.{code}"
-
-    def get_stock_industry(self, code: str) -> str:
-        """获取个股所属行业（带缓存）"""
-        if code in self._industry_cache:
-            return self._industry_cache[code]
-
-        self._login()
-        try:
-            bs_code = self._normalize_code(code)
-            rs = bs.query_stock_industry(bs_code)
-            while rs.next():
-                industry = rs.get_row_data()[2] or ""
-                self._industry_cache[code] = industry
-                return industry
-        finally:
-            self._logout()
-        return ""
 
     def get_all_sector_flows(self) -> List[SectorFlowData]:
         """获取所有板块资金流向"""
@@ -89,7 +50,7 @@ class SectorFlowFetcher:
             try:
                 bs_code = stock[0]
                 code = bs_code.split(".")[1]
-                industry = self.get_stock_industry(code)
+                industry = get_stock_industry(code)
 
                 if not industry:
                     continue
