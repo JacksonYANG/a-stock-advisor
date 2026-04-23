@@ -576,6 +576,49 @@ def remove(stock):
     console.print(f"[green]✓ 已删除持仓 {code}[/green]")
 
 
+@portfolio.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+def avg_cost(stock):
+    """📐 计算持仓均价（含手续费）"""
+    from data_provider.storage import Database
+
+    code = stock.strip().zfill(6)
+    db = Database()
+    positions = db.get_positions()
+    pos = next((p for p in positions if p.code == code), None)
+
+    if not pos:
+        console.print(f"[yellow]未找到持仓: {code}[/yellow]")
+        return
+
+    trades = db.get_trades(code=code)
+    if not trades:
+        console.print(f"[yellow]未找到交易记录: {code}[/yellow]")
+        return
+
+    total_shares = 0
+    total_cost = 0.0
+
+    for t in trades:
+        if t.trade_type == "买入":
+            total_shares += t.shares
+            total_cost += t.shares * t.price + t.commission
+        elif t.trade_type == "卖出":
+            total_shares -= t.shares
+            total_cost -= t.shares * t.price - t.commission
+
+    if total_shares <= 0:
+        console.print(f"[yellow]{code} 已清仓[/yellow]")
+        return
+
+    avg_price = total_cost / total_shares
+    console.print(f"[bold]📐 {code} 均价重算结果[/bold]")
+    console.print(f"  总股数: {total_shares}")
+    console.print(f"  总成本: {total_cost:.2f}")
+    console.print(f"  均价: [green]{avg_price:.3f}[/green]")
+    console.print(f"  当前持仓均价: {pos.avg_cost:.3f}")
+
+
 # ==================== 基本面分析 ====================
 
 @cli.command()
@@ -1164,6 +1207,119 @@ def pick(top):
     picker = get_stock_picker()
     report = picker.generate_daily_report(top_n=top)
     picker.print_report(report)
+
+
+@cli.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--strategy", default="综合", help="策略类型")
+def ai(stock, strategy):
+    """🤖 AI 智能分析"""
+    from analyzer.ai_advisor import AIAdvisor
+
+    code = stock.strip().zfill(6)
+    console.print(f"[bold cyan]🤖 AI 分析中: {code}[/bold cyan]")
+
+    advisor = AIAdvisor()
+    if not advisor.is_available:
+        console.print("[yellow]AI 分析未配置，请设置 LLM_PROVIDER 和 LLM_API_KEY[/yellow]")
+        return
+
+    advice = advisor.analyze_by_code(code, strategy)
+
+    if not advice or not advice.summary:
+        console.print("[yellow]AI 分析失败，请检查 LLM 配置[/yellow]")
+        return
+
+    from rich.panel import Panel
+    key_factors = "\n".join(f"  • {f}" for f in (advice.key_factors or [])[:5])
+    risk_warnings = "\n".join(f"  ⚠️ {r}" for r in (advice.risk_warnings or [])[:3])
+
+    console.print(Panel(
+        f"[bold]{advice.summary}[/bold]\n\n"
+        f"操作建议: [bold]{advice.operation}[/bold]\n"
+        f"建议买入价: {advice.entry_price:.2f}\n"
+        f"止损价: [red]{advice.stop_loss:.2f}[/red]\n"
+        f"目标价: [green]{advice.target_price:.2f}[/green]\n"
+        f"风险等级: {advice.risk_level}\n\n"
+        f"关键因素:\n{key_factors}\n\n"
+        f"风险提示:\n{risk_warnings}",
+        title=f"{code} AI 分析报告",
+        border_style="cyan",
+    ))
+
+
+@cli.command()
+@click.option("--stocks", "-s", help="股票代码（逗号分隔，留空则使用自选股）")
+@click.option("--start", default="2025-01-01", help="回测开始日期")
+@click.option("--strategy", default="ma_cross", help="策略名称")
+def backtest_rank(stocks, start, strategy):
+    """🏆 多股票回测排名"""
+    from analyzer.backtest_engine import get_backtest_engine
+    from config import Config
+    from datetime import datetime
+
+    config = Config.get()
+    stock_list = []
+    if stocks:
+        stock_list = [c.strip().zfill(6) for c in stocks.split(",") if c.strip()]
+    else:
+        stock_list = config.WATCH_LIST[:10]
+
+    if not stock_list:
+        console.print("[yellow]未指定股票[/yellow]")
+        return
+
+    engine = get_backtest_engine()
+    results = {}
+
+    console.print(f"[bold cyan]🏆 多股票回测中 ({len(stock_list)} 只)...[/bold cyan]")
+
+    end_date = datetime.now().strftime("%Y-%m-%d")
+
+    for code in stock_list:
+        try:
+            all_results = engine.run_multi_strategy(code, start, end_date)
+            if strategy in all_results:
+                results[code] = all_results[strategy]
+            elif all_results:
+                # 使用第一个可用策略的结果
+                results[code] = next(iter(all_results.values()))
+        except Exception:
+            continue
+
+    if not results:
+        console.print("[yellow]所有股票回测均失败[/yellow]")
+        return
+
+    sorted_results = sorted(results.items(), key=lambda x: x[1].annualized_return, reverse=True)
+
+    table = Table(title=f"回测排名 ({strategy})", show_header=True, header_style="bold magenta")
+    table.add_column("排名", justify="right")
+    table.add_column("代码", style="cyan")
+    table.add_column("年化收益", justify="right")
+    table.add_column("总收益", justify="right")
+    table.add_column("胜率", justify="right")
+    table.add_column("最大回撤", justify="right")
+    table.add_column("夏普比率", justify="right")
+
+    for i, (code, r) in enumerate(sorted_results, 1):
+        ann_color = "green" if r.annualized_return > 0 else "red"
+        table.add_row(
+            str(i), code,
+            f"[{ann_color}]{r.annualized_return:+.2f}%[/{ann_color}]",
+            f"{r.total_return:+.2f}%",
+            f"{r.win_rate:.1f}%",
+            f"[red]{r.max_drawdown:.2f}%[/red]",
+            f"{r.sharpe_ratio:.2f}",
+        )
+
+    console.print(table)
+
+    try:
+        chart_path = engine.plot_backtest_result(results)
+        console.print(f"[green]✓ 回测图表已保存: {chart_path}[/green]")
+    except:
+        pass
 
 
 @cli.command()
