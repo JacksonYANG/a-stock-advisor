@@ -431,6 +431,145 @@ def backtest(stock, start, end, cash):
         console.print("[yellow]未获得回测结果[/yellow]")
 
 
+# ==================== 持仓管理 ====================
+
+@cli.group()
+def portfolio():
+    """💼 持仓管理"""
+    pass
+
+
+@portfolio.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--shares", "-n", type=float, required=True, help="持股数量")
+@click.option("--avg-cost", "-c", type=float, required=True, help="平均成本")
+@click.option("--name", help="股票名称（可选）")
+@click.option("--notes", help="备注")
+def add(stock, shares, avg_cost, name, notes):
+    """➕ 添加持仓"""
+    code = stock.strip().zfill(6)
+    if not name:
+        from data_provider.base import DataFetcherManager
+        mgr = DataFetcherManager()
+        mgr.register_sources(["baostock"])
+        quote = mgr.get_quote(code)
+        name = quote.name if quote else code
+
+    db = Database()
+    db.save_position(code, name, shares, avg_cost, notes or "")
+    console.print(f"[green]✓ 已添加持仓: {code} {name} {shares}股 成本 {avg_cost}[/green]")
+
+
+@portfolio.command()
+def list_cmd():
+    """📋 查看持仓"""
+    from config import Config
+    from data_provider.base import DataFetcherManager
+
+    db = Database()
+    positions = db.get_positions()
+
+    if not positions:
+        console.print("[yellow]暂无持仓[/yellow]")
+        return
+
+    config = Config.get()
+    manager = DataFetcherManager()
+    manager.register_sources(config.DATA_SOURCES)
+
+    table = Table(title="💼 持仓列表", show_header=True, header_style="bold magenta")
+    table.add_column("代码", style="cyan")
+    table.add_column("名称")
+    table.add_column("持股", justify="right")
+    table.add_column("成本", justify="right")
+    table.add_column("现价", justify="right")
+    table.add_column("市值", justify="right")
+    table.add_column("浮动盈亏", justify="right")
+    table.add_column("盈亏%", justify="right")
+
+    total_pnl = 0
+    total_value = 0
+
+    for pos in positions:
+        try:
+            quote = manager.get_quote(pos.code)
+            if quote:
+                db.update_position_price(pos.code, quote.current_price)
+                pos.current_price = quote.current_price
+                pos.market_value = pos.shares * quote.current_price
+                pos.floating_pnl = (quote.current_price - pos.avg_cost) * pos.shares
+                pos.floating_pnl_pct = (quote.current_price - pos.avg_cost) / pos.avg_cost * 100 if pos.avg_cost > 0 else 0
+        except:
+            pass
+
+        pnl_color = "green" if pos.floating_pnl >= 0 else "red"
+        pnl_pct_color = "green" if pos.floating_pnl_pct >= 0 else "red"
+
+        table.add_row(
+            pos.code,
+            pos.name or "",
+            f"{pos.shares:.0f}",
+            f"{pos.avg_cost:.2f}",
+            f"{pos.current_price:.2f}",
+            f"{pos.market_value:,.0f}",
+            f"[{pnl_color}]{pos.floating_pnl:+,.0f}[/{pnl_color}]",
+            f"[{pnl_pct_color}]{pos.floating_pnl_pct:+.1f}%[/{pnl_pct_color}]",
+        )
+        total_pnl += pos.floating_pnl
+        total_value += pos.market_value
+
+    console.print(table)
+    total_color = "green" if total_pnl >= 0 else "red"
+    console.print(f"\n[bold]总浮动盈亏: [{total_color}]{total_pnl:+,.0f}[/{total_color}] | 总市值: {total_value:,.0f}[/bold]")
+
+
+@portfolio.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--shares", "-n", type=float, required=True, help="卖出数量")
+@click.option("--price", "-p", type=float, required=True, help="卖出价格")
+@click.option("--strategy", help="策略来源")
+@click.option("--notes", help="备注")
+def sell(stock, shares, price, strategy, notes):
+    """🔴 卖出股票"""
+    code = stock.strip().zfill(6)
+    db = Database()
+    positions = db.get_positions()
+    pos = next((p for p in positions if p.code == code), None)
+
+    if not pos:
+        console.print(f"[red]没有找到 {code} 的持仓[/red]")
+        return
+
+    amount = shares * price
+    commission = amount * 0.001
+
+    db.save_trade(
+        code=code, name=pos.name or "",
+        trade_type="sell", shares=shares, price=price,
+        amount=amount, commission=commission,
+        strategy=strategy or "", notes=notes or "",
+    )
+
+    new_shares = pos.shares - shares
+    if new_shares <= 0:
+        db.remove_position(code)
+        console.print(f"[yellow]✓ {code} 已全部清仓[/yellow]")
+    else:
+        console.print(f"[green]✓ 卖出 {code}: {shares}股 @ {price}[/green]")
+
+    console.print(f"[dim]手续费: {commission:.2f} | 实际收款: {amount - commission:.2f}[/dim]")
+
+
+@portfolio.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+def remove(stock):
+    """🗑️ 删除持仓（清仓）"""
+    code = stock.strip().zfill(6)
+    db = Database()
+    db.remove_position(code)
+    console.print(f"[green]✓ 已删除持仓 {code}[/green]")
+
+
 @cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
