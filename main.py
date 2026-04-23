@@ -570,6 +570,153 @@ def remove(stock):
     console.print(f"[green]✓ 已删除持仓 {code}[/green]")
 
 
+# ==================== 基本面分析 ====================
+
+@cli.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--year", "-y", type=int, help="年份 (默认去年)")
+def financial(stock, year):
+    """📊 基本面分析"""
+    from data_provider.fundamental import get_fundamental_fetcher
+
+    code = stock.strip().zfill(6)
+    fetcher = get_fundamental_fetcher()
+
+    console.print(f"\n[bold cyan]📊 基本面数据: {code}[/bold cyan]")
+
+    # 综合财务数据
+    data = fetcher.get_financial_data(code, year=year)
+    if data:
+        console.print(Panel(
+            f"[bold]{data.name} ({data.code})[/bold]\n\n"
+            f"净资产收益率 (ROE): [green]{data.roe:.2f}%[/green]\n"
+            f"毛利率: {data.gross_margin:.2f}%  |  净利率: {data.net_margin:.2f}%\n"
+            f"净利润增速: {data.profit_growth:+.2f}%  |  营收增速: {data.revenue_growth:+.2f}%\n"
+            f"每股收益 (TTM): {data.eps:.4f}",
+            title="财务质量",
+            border_style="cyan",
+        ))
+
+        # 财务评分
+        score = 0
+        reasons = []
+        if data.roe > 15:
+            score += 30
+            reasons.append("ROE>15%，盈利能力优秀")
+        elif data.roe > 8:
+            score += 15
+            reasons.append("ROE>8%，盈利能力良好")
+        elif data.roe > 0:
+            score += 5
+            reasons.append("ROE>0，盈利但偏低")
+
+        if data.profit_growth > 20:
+            score += 25
+            reasons.append("净利润增速>20%，成长性强")
+        elif data.profit_growth > 0:
+            score += 10
+            reasons.append("净利润正增长")
+
+        if data.gross_margin > 30:
+            score += 20
+            reasons.append("毛利率>30%，定价能力强")
+        elif data.gross_margin > 0:
+            score += 10
+
+        if data.net_margin > 10:
+            score += 15
+            reasons.append("净利率>10%，盈利质量高")
+        elif data.net_margin > 0:
+            score += 5
+
+        if data.profit_growth < -20:
+            score -= 20
+            reasons.append("⚠️ 净利润大幅下滑，风险警示")
+
+        score = max(0, min(100, score))
+
+        if score >= 70:
+            label = "[green]优秀[/green]"
+        elif score >= 50:
+            label = "[yellow]良好[/yellow]"
+        elif score >= 30:
+            label = "[yellow]一般[/yellow]"
+        else:
+            label = "[red]较差[/red]"
+
+        console.print(Panel(
+            f"基本面评分: {label}  ({score}/100)\n\n" + "\n".join(f"• {r}" for r in reasons),
+            title="财务评分",
+            border_style="cyan",
+        ))
+    else:
+        console.print("[yellow]无法获取基本面数据[/yellow]")
+
+
+@cli.command()
+@click.option("--roe-min", type=float, help="ROE下限 (%)")
+@click.option("--profit-growth-min", type=float, help="净利润增速下限 (%)")
+@click.option("--net-margin-min", type=float, help="净利率下限 (%)")
+@click.option("--gross-margin-min", type=float, help="毛利率下限 (%)")
+@click.option("--limit", "-n", type=int, default=20, help="返回数量")
+def screen(roe_min, profit_growth_min, net_margin_min, gross_margin_min, limit):
+    """🔍 财务筛选"""
+    from data_provider.fundamental import get_fundamental_fetcher
+
+    console.print(f"[bold cyan]🔍 财务筛选[/bold cyan]")
+    conditions = []
+    if roe_min:
+        conditions.append(f"ROE ≥ {roe_min}%")
+    if profit_growth_min:
+        conditions.append(f"净利润增速 ≥ {profit_growth_min}%")
+    if net_margin_min:
+        conditions.append(f"净利率 ≥ {net_margin_min}%")
+    if gross_margin_min:
+        conditions.append(f"毛利率 ≥ {gross_margin_min}%")
+
+    if conditions:
+        console.print("条件: " + " | ".join(conditions))
+    else:
+        console.print("[yellow]未设置筛选条件，返回示例数据[/yellow]")
+
+    fetcher = get_fundamental_fetcher()
+
+    # 使用默认筛选或传入的条件
+    results = fetcher.screen_stocks(
+        roe_min=roe_min,
+        profit_growth_min=profit_growth_min,
+        net_margin_min=net_margin_min,
+        gross_margin_min=gross_margin_min,
+        limit=limit,
+    )
+
+    if not results:
+        console.print("[yellow]未找到符合条件的股票[/yellow]")
+        return
+
+    table = Table(title=f"筛选结果 ({len(results)}只)", show_header=True, header_style="bold magenta")
+    table.add_column("代码", style="cyan")
+    table.add_column("名称")
+    table.add_column("ROE%", justify="right")
+    table.add_column("净利率%", justify="right")
+    table.add_column("毛利率%", justify="right")
+    table.add_column("净利润增速%", justify="right")
+    table.add_column("行业", style="dim")
+
+    for r in results:
+        table.add_row(
+            r["code"],
+            r["name"],
+            f"{r['roe']:.1f}" if r['roe'] else "N/A",
+            f"{r['net_margin']:.1f}" if r['net_margin'] else "N/A",
+            f"{r['gross_margin']:.1f}" if r['gross_margin'] else "N/A",
+            f"{r['profit_growth']:+.1f}" if r['profit_growth'] else "N/A",
+            r.get("industry", ""),
+        )
+
+    console.print(table)
+
+
 @cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
