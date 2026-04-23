@@ -1,0 +1,36 @@
+version: "3.8"
+
+services:
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./.env:/app/.env
+    environment:
+      - FLASK_ENV=production
+    restart: unless-stopped
+
+  scheduler:
+    build: .
+    command: python run_scheduled.py full
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./.env:/app/.env
+    restart: unless-stopped
+    depends_on:
+      - web
+
+  monitor:
+    build: .
+    command: python run_monitoring.py --interval 60
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./.env:/app/.env
+    restart: unless-stopped
+    depends_on:
+      - web

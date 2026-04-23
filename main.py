@@ -1878,6 +1878,92 @@ def breadth(date):
 
 
 @cli.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--price", "-p", type=float, required=True, help="买入价格")
+@click.option("--shares", type=int, default=100, help="股数")
+@click.option("--strategy", default="", help="策略")
+@click.option("--reason", "-r", default="", help="理由")
+def paper_buy(stock, price, shares, strategy, reason):
+    """🧪 模拟买入"""
+    from analyzer.paper_trading import get_paper_engine
+    from data_provider.base import DataFetcherManager
+
+    code = stock.strip().zfill(6)
+    manager = DataFetcherManager()
+    manager.register_sources(["baostock"])
+
+    name = ""
+    try:
+        quote = manager.get_quote(code)
+        name = quote.name if quote else code
+    except:
+        name = code
+
+    engine = get_paper_engine()
+    trade = engine.buy(code, name, price, shares, strategy, reason=reason)
+    console.print(f"[green]✓ 模拟买入: {code} {name} @ {price} x {shares}股[/green]")
+
+
+@cli.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--price", "-p", type=float, required=True, help="卖出价格")
+def paper_sell(stock, price):
+    """🧪 模拟卖出"""
+    from analyzer.paper_trading import get_paper_engine
+
+    code = stock.strip().zfill(6)
+    engine = get_paper_engine()
+    result = engine.sell(code, price)
+
+    if result:
+        pnl_color = "green" if result.pnl > 0 else "red"
+        console.print(f"[green]✓ 模拟卖出: {code} @ {price}[/green]")
+        console.print(f"  盈亏: [{pnl_color}]{result.pnl:+.2f} ({result.pnl_pct:+.2f}%)[/{pnl_color}]")
+    else:
+        console.print(f"[yellow]未找到 {code} 的未平仓买入[/yellow]")
+
+
+@cli.command()
+def paper_positions():
+    """🧪 查看模拟持仓"""
+    from analyzer.paper_trading import get_paper_engine
+
+    engine = get_paper_engine()
+    engine.update_prices()
+    positions = engine.get_open_positions()
+    summary = engine.get_summary()
+
+    console.print(f"[bold cyan]🧪 模拟交易持仓[/bold cyan]")
+
+    if not positions:
+        console.print("[yellow]暂无模拟持仓[/yellow]")
+        return
+
+    table = Table(title="模拟持仓", show_header=True, header_style="bold magenta")
+    table.add_column("代码", style="cyan")
+    table.add_column("名称")
+    table.add_column("买入价", justify="right")
+    table.add_column("现价", justify="right")
+    table.add_column("股数", justify="right")
+    table.add_column("盈亏", justify="right")
+    table.add_column("盈亏%", justify="right")
+    table.add_column("策略")
+
+    for p in positions:
+        pnl_color = "green" if p.pnl > 0 else "red"
+        table.add_row(
+            p.code, p.name, f"{p.price:.2f}", f"{p.current_price:.2f}",
+            str(p.shares),
+            f"[{pnl_color}]{p.pnl:+,.2f}[/{pnl_color}]",
+            f"[{pnl_color}]{p.pnl_pct:+.2f}%[/{pnl_color}]",
+            p.strategy,
+        )
+    console.print(table)
+
+    console.print(f"\n总盈亏: {summary['total_pnl']:+,.2f} | 胜率: {summary['win_rate']:.1f}%")
+
+
+@cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
     from analyzer.telegram_notifier import TelegramNotifier
