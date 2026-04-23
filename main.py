@@ -1154,6 +1154,19 @@ def margin(stock, days):
 
 
 @cli.command()
+@click.option("--top", "-n", type=int, default=10, help="推荐股票数量")
+def pick(top):
+    """🎯 智能选股报告"""
+    from analyzer.stock_picker import get_stock_picker
+
+    console.print(f"[bold cyan]🎯 智能选股中...[/bold cyan]")
+
+    picker = get_stock_picker()
+    report = picker.generate_daily_report(top_n=top)
+    picker.print_report(report)
+
+
+@cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
     from analyzer.telegram_notifier import TelegramNotifier
