@@ -1108,6 +1108,52 @@ def sector_flow(top):
 
 
 @cli.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--days", "-d", type=int, default=10, help="历史天数")
+def margin(stock, days):
+    """📊 融资融券数据"""
+    from data_provider.margin import get_margin_fetcher
+
+    code = stock.strip().zfill(6)
+    console.print(f"[bold cyan]📊 {code} 融资融券数据[/bold cyan]")
+
+    fetcher = get_margin_fetcher()
+    history = fetcher.get_history(code, days)
+
+    if not history:
+        console.print("[yellow]未获取到融资融券数据（需配置Tushare Token）[/yellow]")
+        return
+
+    latest = history[0]
+
+    console.print(Panel(
+        f"[bold]日期: {latest.date}[/bold]\n\n"
+        f"融资余额: [green]{latest.margin_balance:,.0f}万[/green]\n"
+        f"融资买入: {latest.margin_buy:,.0f}万\n"
+        f"融券余额: [red]{latest.short_balance:,.0f}万[/red]\n"
+        f"融资/融券比: {latest.margin_ratio:.2f}x",
+        title=f"{latest.name}",
+        border_style="cyan",
+    ))
+
+    table = Table(title=f"近{len(history)}日融资融券", show_header=True, header_style="bold magenta")
+    table.add_column("日期", style="cyan")
+    table.add_column("收盘价", justify="right")
+    table.add_column("融资余额(万)", justify="right", style="green")
+    table.add_column("融资买入(万)", justify="right")
+    table.add_column("融券余额(万)", justify="right", style="red")
+    table.add_column("比值", justify="right")
+
+    for d in history:
+        table.add_row(
+            d.date, f"{d.close_price:.2f}",
+            f"{d.margin_balance:,.0f}", f"{d.margin_buy:,.0f}",
+            f"{d.short_balance:,.0f}", f"{d.margin_ratio:.2f}",
+        )
+    console.print(table)
+
+
+@cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
     from analyzer.telegram_notifier import TelegramNotifier
