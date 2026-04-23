@@ -322,6 +322,72 @@ class _BacktestStrategy_{name.replace(' ', '_').replace('-', '_')}(BacktestStrat
 
         console.print(table)
 
+    def plot_backtest_result(self, results: Dict[str, BacktestResult], save_path: Optional[str] = None):
+        """
+        绘制回测结果图表
+        - 年化收益柱状图
+        - 关键指标对比
+        """
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        # 中文字体设置
+        try:
+            plt.rcParams["font.sans-serif"] = ["WenQuanYi Zen Hei", "SimHei", "DejaVu Sans"]
+            plt.rcParams["axes.unicode_minus"] = False
+        except:
+            pass
+
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+        names = list(results.keys())
+        annualized = [r.annualized_return for r in results.values()]
+        colors = ["#2ecc71" if x >= 0 else "#e74c3c" for x in annualized]
+
+        # 子图1: 年化收益对比
+        axes[0].barh(names, annualized, color=colors, alpha=0.8)
+        axes[0].set_xlabel("Annualized Return (%)", fontsize=11)
+        axes[0].set_title("Strategy Annualized Returns", fontsize=13, fontweight="bold")
+        axes[0].axvline(x=0, color="black", linewidth=0.5)
+        for i, v in enumerate(annualized):
+            axes[0].text(v + 0.5, i, f"{v:.1f}%", va="center", fontsize=9)
+
+        # 子图2: 关键指标对比
+        metrics_data = {}
+        for name in names:
+            r = results[name]
+            metrics_data[name] = {
+                "win_rate": r.win_rate,
+                "max_drawdown": r.max_drawdown,
+                "sharpe_ratio": r.sharpe_ratio * 10,  # 缩放以便可视化
+            }
+
+        x = range(len(names))
+        width = 0.25
+        metric_names = ["win_rate", "max_drawdown", "sharpe_ratio"]
+        metric_labels = ["Win Rate (%)", "Max Drawdown (%)", "Sharpe×10"]
+        bar_colors = ["#3498db", "#e74c3c", "#f39c12"]
+
+        for i, (m, l, c) in enumerate(zip(metric_names, metric_labels, bar_colors)):
+            values = [metrics_data[n][m] for n in names]
+            axes[1].bar([xi + width * i for xi in x], values, width, label=l, color=c, alpha=0.8)
+
+        axes[1].set_xticks([xi + width for xi in x])
+        axes[1].set_xticklabels(names, rotation=35, ha="right", fontsize=9)
+        axes[1].legend(fontsize=9)
+        axes[1].set_title("Key Metrics Comparison", fontsize=13, fontweight="bold")
+
+        plt.tight_layout()
+
+        if save_path:
+            plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        else:
+            plt.savefig("reports/backtest_result.png", dpi=150, bbox_inches="tight")
+
+        plt.close()
+        return save_path or "reports/backtest_result.png"
+
 
 _backtest_engine = None
 

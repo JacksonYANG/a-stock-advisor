@@ -427,6 +427,12 @@ def backtest(stock, start, end, cash):
 
     if results:
         engine.print_summary(results)
+        # 生成图表
+        try:
+            chart_path = engine.plot_backtest_result(results)
+            console.print(f"[green]✓ 回测图表已保存: {chart_path}[/green]")
+        except Exception as e:
+            console.print(f"[yellow]⚠️ 图表生成失败: {e}[/yellow]")
     else:
         console.print("[yellow]未获得回测结果[/yellow]")
 
