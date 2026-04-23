@@ -859,6 +859,55 @@ def north_money(days):
 
 
 @cli.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--limit", "-n", type=int, default=10, help="新闻条数")
+def news(stock, limit):
+    """📰 个股新闻舆情"""
+    from analyzer.sentiment import get_news_fetcher
+
+    code = stock.strip().zfill(6)
+
+    # 转换代码格式 (东方财富格式: sh.600519)
+    if code.startswith(("6", "5", "9")):
+        ef_code = f"sh.{code}"
+    else:
+        ef_code = f"sz.{code}"
+
+    console.print(f"[bold cyan]📰 {code} 最新资讯[/bold cyan]")
+
+    fetcher = get_news_fetcher()
+    news_items = fetcher.get_stock_news(ef_code, limit)
+
+    if not news_items:
+        console.print("[yellow]未找到相关新闻[/yellow]")
+        return
+
+    table = Table(title=f"新闻列表 ({len(news_items)}条)", show_header=True, header_style="bold magenta")
+    table.add_column("情感", width=8)
+    table.add_column("时间", width=12)
+    table.add_column("标题")
+
+    for item in news_items:
+        if item.sentiment == "positive":
+            emoji = "✅"
+            color = "green"
+        elif item.sentiment == "negative":
+            emoji = "⚠️"
+            color = "red"
+        else:
+            emoji = "➖"
+            color = "dim"
+
+        table.add_row(
+            emoji,
+            item.publish_time[:10] if item.publish_time else "",
+            f"[{color}]{item.title[:60]}[/{color}]" + ("..." if len(item.title) > 60 else ""),
+        )
+
+    console.print(table)
+
+
+@cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
     from analyzer.telegram_notifier import TelegramNotifier
