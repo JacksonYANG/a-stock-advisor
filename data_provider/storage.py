@@ -124,6 +124,17 @@ class Trade(Base):
     created_at = Column(DateTime, default=datetime.now)
 
 
+class StockPool(Base):
+    """股票池"""
+    __tablename__ = "stock_pools"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(50), nullable=False)
+    code = Column(String(10), nullable=False)
+    added_at = Column(DateTime, default=datetime.now)
+    notes = Column(Text, default="")
+
+
 class Database:
     """数据库管理"""
 
@@ -312,5 +323,58 @@ class Database:
             if code:
                 q = q.filter(Trade.code == code)
             return q.order_by(Trade.trade_date.desc()).limit(limit).all()
+        finally:
+            session.close()
+
+    def save_stock_pool(self, pool_name: str, code: str, notes: str = ""):
+        """添加股票到股票池"""
+        session = self.get_session()
+        try:
+            existing = session.query(StockPool).filter(
+                StockPool.name == pool_name,
+                StockPool.code == code,
+            ).first()
+            if not existing:
+                pool = StockPool(name=pool_name, code=code, notes=notes)
+                session.add(pool)
+            session.commit()
+        finally:
+            session.close()
+
+    def get_stock_pools(self) -> List:
+        """获取所有股票池名称"""
+        session = self.get_session()
+        try:
+            rows = session.query(StockPool.name).distinct().all()
+            return [r[0] for r in rows]
+        finally:
+            session.close()
+
+    def get_pool_stocks(self, pool_name: str) -> List:
+        """获取股票池所有股票"""
+        session = self.get_session()
+        try:
+            return session.query(StockPool).filter(StockPool.name == pool_name).all()
+        finally:
+            session.close()
+
+    def remove_pool_stock(self, pool_name: str, code: str):
+        """从股票池移除股票"""
+        session = self.get_session()
+        try:
+            session.query(StockPool).filter(
+                StockPool.name == pool_name,
+                StockPool.code == code,
+            ).delete()
+            session.commit()
+        finally:
+            session.close()
+
+    def delete_pool(self, pool_name: str):
+        """删除整个股票池"""
+        session = self.get_session()
+        try:
+            session.query(StockPool).filter(StockPool.name == pool_name).delete()
+            session.commit()
         finally:
             session.close()

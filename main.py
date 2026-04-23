@@ -913,6 +913,98 @@ def news(stock, limit):
     console.print(table)
 
 
+@cli.group()
+def pool():
+    """📦 股票池管理"""
+    pass
+
+
+@pool.command()
+@click.option("--name", "-n", required=True, help="股票池名称")
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--notes", help="备注")
+def add(name, stock, notes):
+    """➕ 添加股票到股票池"""
+    code = stock.strip().zfill(6)
+    db = Database()
+    db.save_stock_pool(name, code, notes or "")
+    console.print(f"[green]✓ 已添加 {code} 到股票池 '{name}'[/green]")
+
+
+@pool.command()
+def list_pools():
+    """📋 列出所有股票池"""
+    db = Database()
+    pools = db.get_stock_pools()
+
+    if not pools:
+        console.print("[yellow]暂无股票池[/yellow]")
+        return
+
+    for p in pools:
+        stocks = db.get_pool_stocks(p)
+        console.print(f"[cyan]{p}[/cyan] ({len(stocks)}只)")
+
+
+@pool.command()
+@click.option("--name", "-n", required=True, help="股票池名称")
+def list_stocks(name):
+    """📋 查看股票池成分股"""
+    from data_provider.base import DataFetcherManager
+
+    db = Database()
+    stocks = db.get_pool_stocks(name)
+
+    if not stocks:
+        console.print(f"[yellow]股票池 '{name}' 为空[/yellow]")
+        return
+
+    manager = DataFetcherManager()
+    manager.register_sources(["baostock"])
+
+    table = Table(title=f"📦 {name} 成分股", show_header=True, header_style="bold magenta")
+    table.add_column("代码", style="cyan")
+    table.add_column("名称")
+    table.add_column("现价", justify="right")
+    table.add_column("涨跌幅", justify="right")
+    table.add_column("备注")
+
+    for s in stocks:
+        try:
+            quote = manager.get_quote(s.code)
+            if quote:
+                chg = quote.change_pct
+                color = "green" if chg > 0 else "red" if chg < 0 else "white"
+                table.add_row(s.code, s.name or quote.name, f"{quote.current_price:.2f}",
+                            f"[{color}]{chg:+.2f}%[/{color}]", s.notes or "")
+            else:
+                table.add_row(s.code, s.name or "", "N/A", "N/A", s.notes or "")
+        except:
+            table.add_row(s.code, s.name or "", "N/A", "N/A", s.notes or "")
+
+    console.print(table)
+
+
+@pool.command()
+@click.option("--name", "-n", required=True, help="股票池名称")
+@click.option("--stock", "-s", required=True, help="股票代码")
+def remove(name, stock):
+    """➖ 从股票池移除"""
+    code = stock.strip().zfill(6)
+    db = Database()
+    db.remove_pool_stock(name, code)
+    console.print(f"[green]✓ 已从 '{name}' 移除 {code}[/green]")
+
+
+@pool.command()
+@click.option("--name", "-n", required=True, help="股票池名称")
+def delete(name):
+    """🗑️ 删除股票池"""
+    db = Database()
+    db.delete_pool(name)
+    console.print(f"[green]✓ 已删除股票池 '{name}'[/green]")
+
+
 @cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
