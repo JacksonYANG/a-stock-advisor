@@ -1006,6 +1006,74 @@ def delete(name):
 
 
 @cli.command()
+@click.option("--date", "-d", help="交易日期 YYYYMMDD")
+@click.option("--top", "-n", type=int, default=30, help="显示条数")
+def dragon_tiger(date, top):
+    """🐉 龙虎榜追踪"""
+    from data_provider.dragon_tiger import get_dragon_tiger_fetcher
+
+    console.print(f"[bold cyan]🐉 龙虎榜数据[/bold cyan]")
+
+    fetcher = get_dragon_tiger_fetcher()
+    records = fetcher.get_top_list(date) if date else fetcher.get_top_list()
+
+    if not records:
+        console.print("[yellow]未获取到龙虎榜数据（需配置Tushare Token）[/yellow]")
+        return
+
+    console.print(Panel(f"[bold]上榜股票数: {len(records)}[/bold]", title="今日龙虎榜", border_style="cyan"))
+
+    table = Table(title=f"龙虎榜 (前{min(top, len(records))}名)", show_header=True, header_style="bold magenta")
+    table.add_column("代码", style="cyan")
+    table.add_column("名称")
+    table.add_column("收盘价", justify="right")
+    table.add_column("涨跌幅", justify="right")
+    table.add_column("换手率", justify="right")
+    table.add_column("成交额(万)", justify="right")
+    table.add_column("上榜原因")
+
+    for r in records[:top]:
+        chg_color = "green" if r.change_pct > 0 else "red"
+        table.add_row(
+            r.code, r.name, f"{r.close_price:.2f}",
+            f"[{chg_color}]{r.change_pct:+.2f}%[/{chg_color}]",
+            f"{r.turnover_rate:.2f}%", f"{r.amount:,.0f}", r.reason[:25],
+        )
+    console.print(table)
+
+
+@cli.command()
+@click.option("--days", "-d", type=int, default=30, help="统计天数")
+@click.option("--top", "-n", type=int, default=20, help="显示席位数")
+def hot_seats(days, top):
+    """🔥 热门游资席位排行"""
+    from data_provider.dragon_tiger import get_dragon_tiger_fetcher
+
+    console.print(f"[bold cyan]🔥 近{days}天最活跃游资席位[/bold cyan]")
+
+    fetcher = get_dragon_tiger_fetcher()
+    seats = fetcher.get_hot_seats(days)
+
+    if not seats:
+        console.print("[yellow]未获取到席位数据[/yellow]")
+        return
+
+    table = Table(title=f"热门席位 (前{top}名)", show_header=True, header_style="bold magenta")
+    table.add_column("席位名称", style="cyan")
+    table.add_column("上榜次数", justify="right")
+    table.add_column("买入总额(万)", justify="right", style="green")
+    table.add_column("卖出总额(万)", justify="right", style="red")
+    table.add_column("净额(万)", justify="right")
+
+    for s in seats[:top]:
+        net_color = "green" if s["net"] > 0 else "red" if s["net"] < 0 else "dim"
+        table.add_row(s["name"], str(s["appear_count"]),
+                     f"{s['total_buy']:,.0f}", f"{s['total_sell']:,.0f}",
+                     f"[{net_color}]{s['net']:+,.0f}[/{net_color}]")
+    console.print(table)
+
+
+@cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
     from analyzer.telegram_notifier import TelegramNotifier
