@@ -1074,6 +1074,40 @@ def hot_seats(days, top):
 
 
 @cli.command()
+@click.option("--top", "-n", type=int, default=20, help="显示前N个板块")
+def sector_flow(top):
+    """💧 板块资金流向"""
+    from data_provider.sector_flow import get_sector_flow_fetcher
+
+    console.print(f"[bold cyan]💧 行业板块资金流向[/bold cyan]")
+
+    fetcher = get_sector_flow_fetcher()
+    flows = fetcher.get_all_sector_flows()
+
+    if not flows:
+        console.print("[yellow]无法获取板块资金数据[/yellow]")
+        return
+
+    table = Table(title=f"板块资金流向 (前{top}名)", show_header=True, header_style="bold magenta")
+    table.add_column("行业", style="cyan")
+    table.add_column("股票数", justify="right")
+    table.add_column("平均涨跌", justify="right")
+    table.add_column("资金净流入(亿)", justify="right")
+    table.add_column("净流入占市值比", justify="right")
+
+    for f in flows[:top]:
+        change_color = "green" if f.avg_change > 0 else "red"
+        flow_color = "green" if f.total_flow > 0 else "red"
+        table.add_row(
+            f.industry, str(f.stock_count),
+            f"[{change_color}]{f.avg_change:+.2f}%[/{change_color}]",
+            f"[{flow_color}]{f.total_flow:+,.2f}亿[/{flow_color}]",
+            f"{f.inflow_pct:+.3f}%",
+        )
+    console.print(table)
+
+
+@cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
     from analyzer.telegram_notifier import TelegramNotifier
