@@ -1323,6 +1323,243 @@ def backtest_rank(stocks, start, strategy):
 
 
 @cli.command()
+@click.option("--min-score", type=int, default=60, help="最低评分")
+@click.option("--top", "-n", type=int, default=20, help="显示数量")
+@click.option("--sector", help="限定行业")
+def screen_stocks(min_score, top, sector):
+    """🔍 智能综合选股"""
+    from analyzer.smart_screener import get_smart_screener
+
+    console.print(f"[bold cyan]🔍 智能选股中 (最低评分{min_score})...[/bold cyan]")
+
+    screener = get_smart_screener()
+    results = screener.screen_stocks(min_score=min_score, top_n=top, sector=sector)
+
+    if not results:
+        console.print("[yellow]未筛选出符合条件股票[/yellow]")
+        return
+
+    table = Table(title=f"选股结果 ({len(results)}只)", show_header=True, header_style="bold magenta")
+    table.add_column("代码", style="cyan")
+    table.add_column("名称")
+    table.add_column("评分", justify="right")
+    table.add_column("涨跌幅", justify="right")
+    table.add_column("匹配原因")
+
+    for r in results:
+        chg_color = "green" if r.change_pct > 0 else "red"
+        reasons = " | ".join(r.match_reasons[:2])
+        table.add_row(r.code, r.name, f"[bold]{r.score:.0f}[/bold]",
+                    f"[{chg_color}]{r.change_pct:+.2f}%[/{chg_color}]", reasons[:40])
+
+    console.print(table)
+
+
+@cli.command()
+@click.option("--to", "-t", required=True, help="收件人邮箱")
+@click.option("--subject", "-s", default="A股分析报告", help="邮件主题")
+@click.option("--content", "-c", required=True, help="邮件内容")
+def send_email(to, subject, content):
+    """📧 发送邮件"""
+    from config import Config
+
+    config = Config.get()
+
+    if not config.SMTP_HOST or not config.SMTP_USER:
+        console.print("[yellow]邮件配置不完整，请检查 .env SMTP 配置[/yellow]")
+        return
+
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        msg = MIMEMultipart()
+        msg["From"] = config.SMTP_USER
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg.attach(MIMEText(content, "html", "utf-8"))
+
+        with smtplib.SMTP_SSL(config.SMTP_HOST, config.SMTP_PORT) as server:
+            server.login(config.SMTP_USER, config.SMTP_PASSWORD)
+            server.sendmail(config.SMTP_USER, [to], msg.as_string())
+
+        console.print(f"[green]✓ 邮件已发送至 {to}[/green]")
+    except Exception as e:
+        console.print(f"[red]✗ 邮件发送失败: {e}[/red]")
+
+
+@cli.command()
+@click.option("--msg", "-m", required=True, help="发送内容")
+def send_wx(msg):
+    """💬 发送企业微信消息"""
+    from config import Config
+
+    config = Config.get()
+
+    if not config.WECHAT_WEBHOOK_URL:
+        console.print("[yellow]企业微信 Webhook 未配置[/yellow]")
+        return
+
+    try:
+        import requests
+        payload = {"msgtype": "text", "text": {"content": msg}}
+        resp = requests.post(config.WECHAT_WEBHOOK_URL, json=payload, timeout=10)
+        if resp.status_code == 200:
+            console.print("[green]✓ 消息已发送[/green]")
+        else:
+            console.print(f"[red]✗ 发送失败: {resp.status_code}[/red]")
+    except Exception as e:
+        console.print(f"[red]✗ 发送失败: {e}[/red]")
+
+
+@cli.command()
+def config_show():
+    """⚙️ 查看当前配置"""
+    from config import Config
+
+    config = Config.get()
+
+    info = [
+        ["数据源", ", ".join(config.DATA_SOURCES)],
+        ["Tushare Token", "✓ 已配置" if config.TUSHARE_TOKEN else "✗ 未配置"],
+        ["LLM Provider", config.LLM_PROVIDER or "未配置"],
+        ["LLM Model", config.LLM_MODEL or "默认"],
+        ["自选股数量", str(len(config.WATCH_LIST))],
+        ["Telegram Bot", "✓ 已配置" if config.TELEGRAM_BOT_TOKEN else "✗ 未配置"],
+        ["企微 Webhook", "✓ 已配置" if config.WECHAT_WEBHOOK_URL else "✗ 未配置"],
+        ["SMTP 邮件", "✓ 已配置" if config.SMTP_HOST else "✗ 未配置"],
+    ]
+
+    table = Table(title="⚙️ 当前配置", show_header=False, header_style="bold magenta")
+    table.add_column("配置项", style="cyan")
+    table.add_column("值")
+
+    for item in info:
+        table.add_row(item[0], item[1])
+
+    console.print(table)
+
+    if config.WATCH_LIST:
+        shown = ", ".join(config.WATCH_LIST[:10])
+        extra = f" ... (共{len(config.WATCH_LIST)}只)" if len(config.WATCH_LIST) > 10 else ""
+        console.print(f"\n[bold]自选股[/bold]: {shown}{extra}")
+
+
+@cli.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--start", default="2025-01-01", help="回测开始日期")
+@click.option("--format", "-f", type=click.Choice(["json", "csv"]), default="json", help="导出格式")
+@click.option("--output", "-o", help="输出文件路径")
+def backtest_export(stock, start, format, output):
+    """📤 导出回测结果"""
+    from analyzer.backtest_engine import get_backtest_engine
+    import json
+    import csv
+    import os
+    from datetime import datetime
+
+    code = stock.strip().zfill(6)
+    engine = get_backtest_engine()
+    result = engine.run(code, start)
+
+    if not output:
+        output = f"reports/backtest_{code}_{start}.{format}"
+
+    os.makedirs(os.path.dirname(output) or "reports", exist_ok=True)
+
+    if format == "json":
+        data = {
+            "code": code,
+            "start": start,
+            "end": datetime.now().strftime("%Y-%m-%d"),
+            "total_return": result.total_return,
+            "annualized_return": result.annualized_return,
+            "win_rate": result.win_rate,
+            "max_drawdown": result.max_drawdown,
+            "sharpe_ratio": result.sharpe_ratio,
+            "profit_loss_ratio": result.profit_loss_ratio,
+            "avg_holding_days": result.avg_holding_days,
+            "trade_count": result.trade_count,
+        }
+        with open(output, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    else:
+        with open(output, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["指标", "值"])
+            writer.writerow(["代码", code])
+            writer.writerow(["开始日期", start])
+            writer.writerow(["结束日期", datetime.now().strftime("%Y-%m-%d")])
+            writer.writerow(["总收益", f"{result.total_return:.2f}%"])
+            writer.writerow(["年化收益", f"{result.annualized_return:.2f}%"])
+            writer.writerow(["胜率", f"{result.win_rate:.1f}%"])
+            writer.writerow(["最大回撤", f"{result.max_drawdown:.2f}%"])
+            writer.writerow(["夏普比率", f"{result.sharpe_ratio:.2f}"])
+
+    console.print(f"[green]✓ 已导出: {output}[/green]")
+
+
+@cli.command()
+def fear_greed():
+    """🌡️ 市场恐慌贪婪指数"""
+    from analyzer.market_sentiment import get_sentiment_analyzer
+    from rich.panel import Panel
+
+    console.print(f"[bold cyan]🌡️ 市场情绪温度计[/bold cyan]")
+
+    analyzer = get_sentiment_analyzer()
+    sentiment = analyzer.get_sentiment()
+
+    if not sentiment:
+        console.print("[yellow]无法获取市场情绪数据[/yellow]")
+        return
+
+    up_limit = getattr(sentiment, "up_limit_count", 0)
+    down_limit = getattr(sentiment, "down_limit_count", 0)
+
+    if up_limit + down_limit == 0:
+        index = 50.0
+    else:
+        index = up_limit / (up_limit + down_limit) * 100
+
+    if index >= 75:
+        level = "极度贪婪"
+        color = "bright_red"
+        emoji = "🔥"
+    elif index >= 60:
+        level = "贪婪"
+        color = "red"
+        emoji = "😰"
+    elif index >= 40:
+        level = "中性"
+        color = "yellow"
+        emoji = "😐"
+    elif index >= 25:
+        level = "恐慌"
+        color = "cyan"
+        emoji = "😨"
+    else:
+        level = "极度恐慌"
+        color = "bright_cyan"
+        emoji = "🥶"
+
+    up_count = getattr(sentiment, "up_count", "N/A")
+    down_count = getattr(sentiment, "down_count", "N/A")
+
+    console.print(Panel(
+        f"[bold]{emoji} {level}[/bold]\n\n"
+        f"恐慌/贪婪指数: [bold {color}]{index:.1f}[/bold {color}]\n\n"
+        f"涨停家数: [green]{up_limit}[/green]\n"
+        f"跌停家数: [red]{down_limit}[/red]\n"
+        f"上涨家数: {up_count}\n"
+        f"下跌家数: {down_count}",
+        title="市场情绪",
+        border_style="cyan",
+    ))
+
+
+@cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
     from analyzer.telegram_notifier import TelegramNotifier
