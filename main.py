@@ -1560,6 +1560,134 @@ def fear_greed():
 
 
 @cli.command()
+@click.option("--date", "-d", help="交易日期 YYYYMMDD")
+def hot_money(date):
+    """🎰 游资动向追踪"""
+    from data_provider.hot_money_tracker import get_hot_money_tracker
+
+    console.print(f"[bold cyan]🎰 今日游资动向[/bold cyan]")
+
+    tracker = get_hot_money_tracker()
+    activities = tracker.get_daily_activities(date)
+
+    if not activities:
+        console.print("[yellow]未获取到游资活动数据（需安装akshare且市场有龙虎榜数据）[/yellow]")
+        return
+
+    # 按游资组汇总
+    summary = tracker.get_group_summary(date)
+
+    if summary:
+        table = Table(title="游资动向汇总", show_header=True, header_style="bold magenta")
+        table.add_column("游资", style="cyan")
+        table.add_column("风格")
+        table.add_column("净买入(万)", justify="right")
+        table.add_column("买入(万)", justify="right")
+        table.add_column("卖出(万)", justify="right")
+        table.add_column("参与股票数", justify="right")
+        table.add_column("活跃席位")
+
+        for s in summary:
+            net_color = "green" if s["net_total"] > 0 else "red"
+            table.add_row(
+                s["group_name"],
+                s["style"][:15],
+                f"[{net_color}]{s['net_total']:+,.0f}[/{net_color}]",
+                f"{s['buy_total']:,.0f}",
+                f"{s['sell_total']:,.0f}",
+                str(s["stock_count"]),
+                "; ".join(s["seats"][:2]),
+            )
+        console.print(table)
+
+    # 明细
+    table2 = Table(title="游资操作明细", show_header=True, header_style="bold magenta")
+    table2.add_column("游资", style="cyan")
+    table2.add_column("股票")
+    table2.add_column("买入(万)", justify="right")
+    table2.add_column("卖出(万)", justify="right")
+    table2.add_column("净额(万)", justify="right")
+
+    for a in activities[:20]:
+        net_color = "green" if a.net_amount > 0 else "red"
+        table2.add_row(
+            a.group_name,
+            f"{a.stock_name}({a.stock_code})",
+            f"{a.buy_amount:,.0f}",
+            f"{a.sell_amount:,.0f}",
+            f"[{net_color}]{a.net_amount:+,.0f}[/{net_color}]",
+        )
+    console.print(table2)
+
+
+@cli.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--days", "-d", type=int, default=30, help="追踪天数")
+def track_hot_money(stock, days):
+    """🔍 追踪个股游资参与"""
+    from data_provider.hot_money_tracker import get_hot_money_tracker
+
+    code = stock.strip().zfill(6)
+    console.print(f"[bold cyan]🔍 {code} 近{days}天游资参与[/bold cyan]")
+
+    tracker = get_hot_money_tracker()
+    activities = tracker.track_stock(code, days)
+
+    if not activities:
+        console.print("[yellow]未发现游资参与记录[/yellow]")
+        return
+
+    table = Table(title=f"游资参与明细", show_header=True, header_style="bold magenta")
+    table.add_column("日期", style="cyan")
+    table.add_column("游资")
+    table.add_column("席位")
+    table.add_column("买入(万)", justify="right")
+    table.add_column("卖出(万)", justify="right")
+    table.add_column("净额(万)", justify="right")
+
+    for a in activities:
+        net_color = "green" if a.net_amount > 0 else "red"
+        table.add_row(
+            a.date, a.group_name, a.seat_name[:15],
+            f"{a.buy_amount:,.0f}", f"{a.sell_amount:,.0f}",
+            f"[{net_color}]{a.net_amount:+,.0f}[/{net_color}]",
+        )
+    console.print(table)
+
+
+@cli.command()
+def hot_money_groups():
+    """📋 查看已知游资席位"""
+    from data_provider.hot_money_tracker import get_hot_money_tracker
+
+    console.print(f"[bold cyan]📋 已知游资席位注册表[/bold cyan]")
+
+    tracker = get_hot_money_tracker()
+    groups = tracker.list_known_groups()
+
+    if not groups:
+        console.print("[yellow]无游资席位数据，请检查 data/seat_registry.yaml[/yellow]")
+        return
+
+    table = Table(title="游资席位注册表", show_header=True, header_style="bold magenta")
+    table.add_column("游资名称", style="cyan")
+    table.add_column("别名")
+    table.add_column("席位数", justify="right")
+    table.add_column("风格")
+    table.add_column("席位列表")
+
+    for g in groups:
+        table.add_row(
+            g["name"],
+            "/".join(g["aliases"][:2]),
+            str(g["seat_count"]),
+            g["style"][:20],
+            "\n".join(g["seats"][:3]),
+        )
+    console.print(table)
+
+
+@cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
     from analyzer.telegram_notifier import TelegramNotifier
