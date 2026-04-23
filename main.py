@@ -1742,6 +1742,142 @@ def portfolio_analysis():
 
 
 @cli.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--fast-max", type=int, default=20, help="快线最大周期")
+@click.option("--slow-max", type=int, default=60, help="慢线最大周期")
+def optimize(stock, fast_max, slow_max):
+    """⚡ 策略参数优化"""
+    from analyzer.strategy_optimizer import get_strategy_optimizer
+
+    code = stock.strip().zfill(6)
+    console.print(f"[bold cyan]⚡ 优化 {code} MA交叉策略参数...[/bold cyan]")
+
+    optimizer = get_strategy_optimizer()
+    result = optimizer.optimize_ma_cross(
+        code,
+        fast_range=range(5, fast_max + 1, 5),
+        slow_range=range(20, slow_max + 1, 10),
+    )
+
+    if not result.all_results:
+        console.print("[yellow]优化失败[/yellow]")
+        return
+
+    console.print(Panel(
+        f"最优参数: MA{result.best_params.get('fast', '')}/{result.best_params.get('slow', '')}\n"
+        f"预期收益: [green]{result.best_return:+.2f}%[/green]\n"
+        f"夏普比率: {result.best_sharpe:.2f}\n"
+        f"最大回撤: [red]{result.best_drawdown:.2f}%[/red]",
+        title="Optimization Result",
+        border_style="cyan",
+    ))
+
+    # Top 10 参数组合
+    table = Table(title="参数组合排名 (Top 10)", show_header=True, header_style="bold magenta")
+    table.add_column("排名", justify="right")
+    table.add_column("快线", justify="right")
+    table.add_column("慢线", justify="right")
+    table.add_column("收益%", justify="right")
+    table.add_column("夏普", justify="right")
+    table.add_column("回撤%", justify="right")
+
+    for i, r in enumerate(result.all_results, 1):
+        ret_color = "green" if r["total_return"] > 0 else "red"
+        table.add_row(
+            str(i), str(r["fast"]), str(r["slow"]),
+            f"[{ret_color}]{r['total_return']:+.2f}[/{ret_color}]",
+            f"{r['sharpe']:.2f}",
+            f"[red]{r['max_drawdown']:.2f}[/red]",
+        )
+    console.print(table)
+
+
+@cli.command()
+@click.option("--stock", "-s", required=True, help="股票代码")
+@click.option("--action", "-a", required=True, type=click.Choice(["买入", "卖出", "观望"]), help="操作")
+@click.option("--reason", "-r", default="", help="交易理由")
+@click.option("--price", "-p", type=float, default=0, help="价格")
+@click.option("--emotion", "-e", default="", help="情绪")
+@click.option("--strategy", default="", help="策略")
+def journal(stock, action, reason, price, emotion, strategy):
+    """📝 记录交易日志"""
+    from analyzer.trade_journal import save_journal
+    from data_provider.storage import Database
+
+    code = stock.strip().zfill(6)
+    db = Database()
+    save_journal(db, code, action, reason, price, emotion=emotion, strategy=strategy)
+    console.print(f"[green]✓ 已记录: {code} {action}[/green]")
+
+
+@cli.command()
+@click.option("--stock", "-s", help="股票代码（留空查看全部）")
+@click.option("--limit", "-n", type=int, default=20, help="显示条数")
+def journal_list(stock, limit):
+    """📋 查看交易日志"""
+    from analyzer.trade_journal import get_journals
+    from data_provider.storage import Database
+
+    db = Database()
+    journals = get_journals(db, code=stock or "", limit=limit)
+
+    if not journals:
+        console.print("[yellow]暂无交易日志[/yellow]")
+        return
+
+    table = Table(title="交易日志", show_header=True, header_style="bold magenta")
+    table.add_column("时间", style="cyan")
+    table.add_column("代码")
+    table.add_column("操作")
+    table.add_column("价格", justify="right")
+    table.add_column("理由")
+    table.add_column("情绪")
+
+    for j in journals:
+        action_color = "green" if j.action == "买入" else "red" if j.action == "卖出" else "yellow"
+        table.add_row(
+            str(j.created_at)[:16] if j.created_at else "",
+            j.code,
+            f"[{action_color}]{j.action}[/{action_color}]",
+            f"{j.price:.2f}" if j.price else "",
+            (j.reason or "")[:25],
+            j.emotion or "",
+        )
+    console.print(table)
+
+
+@cli.command()
+@click.option("--date", "-d", help="日期 YYYY-MM-DD")
+def breadth(date):
+    """📊 市场宽度指标"""
+    from analyzer.market_breadth import get_market_breadth
+    from rich.panel import Panel
+
+    console.print(f"[bold cyan]📊 市场宽度分析[/bold cyan]")
+
+    mb = get_market_breadth()
+    data = mb.get_breadth(date)
+
+    if data.advance_count + data.decline_count == 0:
+        console.print("[yellow]无法获取市场宽度数据[/yellow]")
+        return
+
+    breadth_color = "green" if data.breadth_pct > 60 else "red" if data.breadth_pct < 40 else "yellow"
+
+    console.print(Panel(
+        f"[bold]日期: {data.date}[/bold]\n\n"
+        f"上涨家数: [green]{data.advance_count}[/green]\n"
+        f"下跌家数: [red]{data.decline_count}[/red]\n"
+        f"平盘家数: {data.flat_count}\n"
+        f"涨停: [green]{data.up_limit}[/green] | 跌停: [red]{data.down_limit}[/red]\n\n"
+        f"涨跌比: {data.ad_ratio:.2f}\n"
+        f"市场宽度: [{breadth_color}]{data.breadth_pct:.1f}%[/{breadth_color}]",
+        title="Market Breadth",
+        border_style="cyan",
+    ))
+
+
+@cli.command()
 def setup_telegram():
     """🤖 配置 Telegram Bot"""
     from analyzer.telegram_notifier import TelegramNotifier
