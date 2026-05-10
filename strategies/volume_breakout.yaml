@@ -1,0 +1,21 @@
+# 放量突破策略
+# 突破关键位 + 放量确认
+
+name: 放量突破策略
+description: 价格突破关键压力位且成交量显著放大时追入
+
+entry_conditions:
+  - "价格突破前期高点或重要均线"
+  - "成交量比5日均量放大1.5倍以上"
+  - "K线实体饱满（阳线实体占比>60%）"
+  - "MACD在零轴附近或以上金叉"
+
+exit_conditions:
+  - "缩量回落至突破位以下"
+  - "出现放量滞涨"
+  - "MACD死叉"
+
+risk_management:
+  stop_loss: "突破K线最低价或-3%"
+  position_size: "30-50%"
+  take_profit: "下一个压力位"

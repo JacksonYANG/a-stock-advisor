@@ -1,0 +1,28 @@
+# 牛市趋势策略
+# 适用于多头排列行情，顺势而为
+
+name: 牛市趋势策略
+description: 均线多头排列时顺势做多，回调到均线支撑位买入
+
+entry_conditions:
+  - trend_status in ["强势多头", "多头排列"]
+  - macd_status not in ["死叉", "空头运行"]
+  - rsi < 70
+  - bias5 < 3%
+
+exit_conditions:
+  - trend_status changes to "偏空" or worse
+  - macd death cross
+  - rsi > 80
+
+risk_management:
+  stop_loss: "跌破MA10或-3%"
+  position_size: "60-80%"
+  take_profit: "根据压力位或RSI超买"
+
+scoring_weights:
+  trend: 35
+  macd: 25
+  volume: 20
+  rsi: 10
+  other: 10

@@ -144,11 +144,14 @@ class StrategyEngine:
 
         matched = 0
         reasons = []
-        total = len(conditions)
+        total = 0  # only count verifiable conditions
 
         for cond in conditions:
             cond_str = str(cond).lower()
             hit, reason = self._check_condition(cond_str, tech)
+            if hit is None:
+                continue  # unverifiable condition, exclude from scoring
+            total += 1
             if hit:
                 matched += 1
                 if reason:
@@ -244,8 +247,8 @@ class StrategyEngine:
             return False, ""
 
         if "换手" in cond:
-            # 换手率需要额外数据，跳过
-            return True, ""
+            # 换手率需要额外数据，无法验证
+            return None, ""
 
         # 布林带
         if "布林" in cond and "下轨" in cond:
@@ -278,13 +281,13 @@ class StrategyEngine:
                 if tech.j_value < 20:
                     return True, f"KDJ超卖(J={tech.j_value:.1f})"
 
-        # 大盘相关（需要额外数据，给默认通过）
+        # 大盘相关（需要额外数据，无法验证）
         if "大盘" in cond or "暴跌" in cond or "系统性风险" in cond:
-            return True, ""
+            return None, ""
 
-        # 板块相关（需要额外数据，给默认通过）
-        if "板块" in cond or "涨停" in cond:
-            return True, ""
+        # 板块相关（需要额外数据，无法验证）
+        if "板块" in cond:
+            return None, ""
 
         # 乖离率
         if "bias" in cond:
@@ -292,13 +295,13 @@ class StrategyEngine:
                 if tech.bias5 < 3:
                     return True, f"BIAS5适中({tech.bias5:.2f}%)"
 
-        # 封板 / 涨停相关
+        # 封板 / 涨停 / 连板相关（需要分时数据，无法验证）
         if "封板" in cond or "涨停" in cond or "连板" in cond:
-            return True, ""
+            return None, ""
 
-        # 竞价相关
+        # 竞价相关（需要竞价数据，无法验证）
         if "竞价" in cond:
-            return True, ""
+            return None, ""
 
         return False, ""
 

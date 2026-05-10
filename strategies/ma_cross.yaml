@@ -1,0 +1,20 @@
+# 均线金叉策略
+# 经典均线交叉信号
+
+name: 均线金叉策略
+description: MA5上穿MA10（短线金叉）或MA10上穿MA20（中线金叉）时买入
+
+entry_conditions:
+  - "MA5 上穿 MA10 (短线金叉)"
+  - "或 MA10 上穿 MA20 (中线金叉)"
+  - "成交量放大 (量比 > 1.2)"
+  - "RSI < 70"
+
+exit_conditions:
+  - "MA5 下穿 MA10 (短线死叉)"
+  - "或 RSI > 80"
+
+risk_management:
+  stop_loss: "金叉K线最低价下方2%或跌破MA20"
+  position_size: "40-60%"
+  take_profit: "压力位或RSI超买"

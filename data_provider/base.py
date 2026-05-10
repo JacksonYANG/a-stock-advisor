@@ -101,9 +101,16 @@ class BaseFetcher(ABC):
 class DataFetcherManager:
     """数据源管理器 - 支持多数据源自动切换"""
 
-    def __init__(self, sources: list[str] = None):
+    def __init__(self, sources: list[str] = None, use_cache: bool = True):
         self._fetchers: Dict[str, BaseFetcher] = {}
         self._ordered_fetchers: list[BaseFetcher] = []
+
+        # 数据缓存 - 消除冗余的全市场数据下载
+        if use_cache:
+            from data_provider.cache import DataCache
+            self._cache = DataCache()
+        else:
+            self._cache = None
 
         if sources:
             self.register_sources(sources)
@@ -149,25 +156,47 @@ class DataFetcherManager:
                     console.print(f"[red]✗ 数据源 {name} 注册失败: {e}[/red]")
 
     def get_quote(self, code: str) -> Optional[StockQuote]:
-        """获取实时行情，自动切换数据源"""
-        for fetcher in self._ordered_fetchers:
-            try:
-                result = fetcher.get_quote(code)
-                if result:
-                    return result
-            except Exception as e:
-                console.print(f"[yellow]⚠ {fetcher.name} 获取行情失败: {e}，尝试下一个数据源[/yellow]")
-        return None
+        """获取实时行情，自动切换数据源（带缓存）"""
+        # 检查缓存
+        if self._cache:
+            cached = self._cache.get_quote(code)
+            if cached is not None:
+                return cached
+
+        # 从数据源获取
+        result = self._fetch_from_sources('get_quote', code)
+
+        # 缓存结果
+        if result and self._cache:
+            self._cache.set_quote(code, result)
+        return result
 
     def get_history(self, code: str, days: int = 120) -> Optional[pd.DataFrame]:
-        """获取历史数据，自动切换数据源"""
+        """获取历史数据，自动切换数据源（带缓存）"""
+        cache_key = f"{code}_{days}"
+        if self._cache:
+            cached = self._cache.get_history(cache_key)
+            if cached is not None:
+                return cached
+
+        result = self._fetch_from_sources('get_history', code, days)
+
+        if result is not None and not result.empty and self._cache:
+            self._cache.set_history(cache_key, result)
+        return result
+
+    def _fetch_from_sources(self, method: str, code: str, *args) -> Any:
+        """Try each data source in priority order"""
         for fetcher in self._ordered_fetchers:
             try:
-                result = fetcher.get_history(code, days)
-                if result is not None and not result.empty:
+                fn = getattr(fetcher, method)
+                result = fn(code, *args)
+                if method == 'get_quote' and result:
+                    return result
+                if method == 'get_history' and result is not None and not result.empty:
                     return result
             except Exception as e:
-                console.print(f"[yellow]⚠ {fetcher.name} 获取历史数据失败: {e}，尝试下一个数据源[/yellow]")
+                console.print(f"[yellow]⚠ {fetcher.name} {method} 失败: {e}，尝试下一个数据源[/yellow]")
         return None
 
     def get_batch_quotes(self, codes: list[str]) -> Dict[str, StockQuote]:
@@ -178,3 +207,19 @@ class DataFetcherManager:
             if quote:
                 results[code] = quote
         return results
+
+    def cache_stats(self) -> dict:
+        """Return cache statistics"""
+        if self._cache:
+            return self._cache.stats()
+        return {"hits": 0, "misses": 0, "hit_rate": "N/A", "size": 0}
+
+    def cache_cleanup(self):
+        """Remove expired cache entries"""
+        if self._cache:
+            self._cache.cleanup_expired()
+
+    def cache_clear(self):
+        """Clear entire cache"""
+        if self._cache:
+            self._cache.clear()

@@ -69,7 +69,8 @@ def analyze_single_stock(code: str, ai: bool = True, chart: bool = True) -> dict
 
     # 3. 技术分析
     console.print("[dim]📊 正在进行技术分析...[/dim]")
-    name = quote.name if quote else ""
+    from data_provider.stock_names import resolve_stock_name
+    name = resolve_stock_name(code, quote, hist)
     tech_result = tech_analyzer.analyze(hist, code=code, name=name)
 
     # 3.5 策略分析

@@ -54,13 +54,44 @@ class BacktestResult:
 
 
 class BacktestStrategy(bt.Strategy):
-    """回测策略基类"""
+    """回测策略基类 - 包含常用指标"""
+
+    params = (
+        ("entry_checks", []),   # list of callables for entry
+        ("exit_checks", []),    # list of callables for exit
+    )
 
     def __init__(self):
         self.order = None
         self.entry_price = None
         self.entry_date = None
         self.trades = []  # 交易记录
+
+        # ── 常用指标 ──
+        # Moving averages
+        self.ma5 = bt.indicators.SMA(self.data.close, period=5)
+        self.ma10 = bt.indicators.SMA(self.data.close, period=10)
+        self.ma20 = bt.indicators.SMA(self.data.close, period=20)
+        self.ma60 = bt.indicators.SMA(self.data.close, period=60)
+
+        # RSI
+        self.rsi6 = bt.indicators.RSI(self.data.close, period=6)
+        self.rsi14 = bt.indicators.RSI(self.data.close, period=14)
+
+        # MACD (standard 12/26/9)
+        self.macd = bt.indicators.MACD(self.data.close)
+
+        # Bollinger Bands (20, 2)
+        self.boll = bt.indicators.BollingerBands(self.data.close, period=20)
+
+        # Volume moving average
+        self.vol_ma5 = bt.indicators.SMA(self.data.volume, period=5)
+        self.vol_ma20 = bt.indicators.SMA(self.data.volume, period=20)
+
+        # Crossover signals (pre-computed for easy use)
+        self.ma5_cross_ma10 = bt.indicators.CrossOver(self.ma5, self.ma10)
+        self.ma10_cross_ma20 = bt.indicators.CrossOver(self.ma10, self.ma20)
+        self.macd_cross_signal = bt.indicators.CrossOver(self.macd.macd, self.macd.signal)
 
     def notify_order(self, order):
         if order.status in [order.Completed]:
@@ -82,7 +113,33 @@ class BacktestStrategy(bt.Strategy):
                 self.entry_date = None
 
     def next(self):
-        pass
+        # Default: use param-based checks
+        if self.entry_price is None and not self.position:
+            if self._check_entry():
+                self.buy()
+        else:
+            if self._check_exit():
+                self.sell()
+
+    def _check_entry(self):
+        """Run all entry condition checkers; ANY match triggers entry."""
+        for fn in self.p.entry_checks:
+            try:
+                if fn(self):
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _check_exit(self):
+        """Run all exit condition checkers; ANY match triggers exit."""
+        for fn in self.p.exit_checks:
+            try:
+                if fn(self):
+                    return True
+            except Exception:
+                pass
+        return False
 
 
 class BacktestEngine:
@@ -141,24 +198,36 @@ class BacktestEngine:
 
         df = df.reset_index(drop=True)
 
+        # Ensure 'date' is the datetime index for PandasData
+        if "date" in df.columns:
+            df = df.set_index("date")
+        elif "datetime" in df.columns:
+            df = df.rename(columns={"datetime": "date"}).set_index("date")
+
+        # Use column names instead of integer positions for robustness
         data = bt.feeds.PandasData(
             dataname=df,
-            datetime=0,
-            open=1,
-            high=2,
-            low=3,
-            close=4,
-            volume=5,
+            datetime=None,     # use index
+            open="open",
+            high="high",
+            low="low",
+            close="close",
+            volume="volume",
             openinterest=-1,
         )
 
         cerebro.adddata(data)
 
-        strategy = self._create_strategy(strategy_name, strategy_yaml)
-        if strategy is None:
+        result = self._create_strategy(strategy_name, strategy_yaml)
+        if result is None:
             return None
 
-        cerebro.addstrategy(strategy)
+        strategy_cls, entry_fns, exit_fns = result
+        cerebro.addstrategy(
+            strategy_cls,
+            entry_checks=entry_fns,
+            exit_checks=exit_fns,
+        )
 
         cerebro.addanalyzer(bt.analyzers.DrawDown, _name="drawdown")
         cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name="sharpe", riskfreerate=0.02)
@@ -226,39 +295,116 @@ class BacktestEngine:
             console.print(f"[red]分析结果提取失败: {e}[/red]")
             return None
 
-    def _create_strategy(self, name: str, yaml_config: dict) -> Optional[type]:
-        """从YAML配置创建backtrader策略类"""
-        entry_conditions = yaml_config.get("entry_conditions", [])
-        exit_conditions = yaml_config.get("exit_conditions", [])
+    def run(self, stock_code, strategy_name, strategy_yaml, start_date, end_date, **kwargs):
+        """Alias for run_backtest() — convenience wrapper."""
+        return self.run_backtest(
+            stock_code=stock_code,
+            strategy_name=strategy_name,
+            strategy_yaml=strategy_yaml,
+            start_date=start_date,
+            end_date=end_date,
+            **kwargs,
+        )
 
-        strategy_code = f"""
-class _BacktestStrategy_{name.replace(' ', '_').replace('-', '_')}(BacktestStrategy):
-    def __init__(self):
-        super().__init__()
-        self.entry_conditions = {entry_conditions}
-        self.exit_conditions = {exit_conditions}
+    # ── 关键词 → 条件检查函数映射 ──
+    # 每个函数接受 strategy 实例 (s)，返回 bool
+    _COND_ENTRY = {
+        # MA 金叉（短线上穿）
+        "金叉": lambda s: s.ma5_cross_ma10[0] > 0,
+        "上穿": lambda s: s.ma5_cross_ma10[0] > 0,
+        "MACD金叉": lambda s: s.macd_cross_signal[0] > 0,
+        "MACD金": lambda s: s.macd_cross_signal[0] > 0,
+        "RSI超卖": lambda s: s.rsi6[0] < 30,
+        "RSI<": lambda s: s.rsi6[0] < 30,
+        "放量": lambda s: s.data.volume[0] > s.vol_ma5[0] * 1.5,
+        "量比": lambda s: s.data.volume[0] > s.vol_ma5[0] * 1.2,
+        "涨停": lambda s: (s.data.close[0] - s.data.close[-1]) / s.data.close[-1] > 0.09,
+        "突破": lambda s: s.data.close[0] > bt.indicators.Highest(s.data.high, period=20)[0],
+        "趋势向上": lambda s: s.data.close[0] > s.ma20[0] and s.ma5[0] > s.ma10[0],
+        "多头": lambda s: s.ma5[0] > s.ma10[0] > s.ma20[0],
+        "站上MA": lambda s: s.data.close[0] > s.ma5[0],
+        "布林下轨": lambda s: s.data.close[0] <= s.boll.lines.bot[0],
+        "缩量回调": lambda s: s.data.volume[0] < s.vol_ma5[0] * 0.7 and s.data.close[0] < s.data.close[-1],
+        "回调MA": lambda s: abs(s.data.close[0] - s.ma10[0]) / s.ma10[0] < 0.02,
+        "回调MA20": lambda s: abs(s.data.close[0] - s.ma20[0]) / s.ma20[0] < 0.02,
+        "阳线": lambda s: s.data.close[0] > s.data.open[0],
+        "企稳": lambda s: s.data.close[0] > s.data.open[0] and s.data.close[0] > s.ma5[0],
+        "底背离": lambda s: s.rsi6[0] < 35,
+    }
 
-    def next(self):
-        if self.entry_price is None:
-            if self._check_entry_conditions():
-                self.buy()
-        else:
-            if self._check_exit_conditions():
-                self.sell()
+    _COND_EXIT = {
+        # MA 死叉（短线下穿）
+        "死叉": lambda s: s.ma5_cross_ma10[0] < 0,
+        "下穿": lambda s: s.ma5_cross_ma10[0] < 0,
+        "MACD死叉": lambda s: s.macd_cross_signal[0] < 0,
+        "MACD死": lambda s: s.macd_cross_signal[0] < 0,
+        "RSI超买": lambda s: s.rsi6[0] > 70,
+        "RSI>": lambda s: s.rsi6[0] > 70,
+        "缩量": lambda s: s.data.volume[0] < s.vol_ma5[0] * 0.5,
+        "跌破": lambda s: s.data.close[0] < s.ma20[0],
+        "跌破MA": lambda s: s.data.close[0] < s.ma5[0],
+        "趋势向下": lambda s: s.data.close[0] < s.ma20[0],
+        "空头": lambda s: s.ma5[0] < s.ma10[0] < s.ma20[0],
+        "布林上轨": lambda s: s.data.close[0] >= s.boll.lines.top[0],
+        "放量滞涨": lambda s: s.data.volume[0] > s.vol_ma5[0] * 1.5
+                             and (s.data.close[0] - s.data.close[-1]) / s.data.close[-1] < 0.01,
+        "长上影": lambda s: s.data.high[0] - max(s.data.open[0], s.data.close[0])
+                            > abs(s.data.close[0] - s.data.open[0]),
+        "大阴线": lambda s: (s.data.close[0] - s.data.open[0]) / s.data.open[0] < -0.03,
+        "跌停": lambda s: (s.data.close[0] - s.data.close[-1]) / s.data.close[-1] < -0.09,
+    }
 
-    def _check_entry_conditions(self):
-        return False
+    @staticmethod
+    def _match_conditions(condition_list, cond_map):
+        """从 YAML 条件列表中匹配出可识别的检查函数。
 
-    def _check_exit_conditions(self):
-        return False
-"""
-        try:
-            local_ns = {"BacktestStrategy": BacktestStrategy}
-            exec(strategy_code, local_ns)
-            return local_ns[list(local_ns.keys())[-1]]
-        except Exception as e:
-            console.print(f"[red]策略类创建失败: {e}[/red]")
-            return None
+        condition_list 可能是:
+          - list[str]  →  ["MA5 上穿 MA10", "放量"]
+          - dict       →  {sub_key: [str, ...], ...}  (嵌套子条件)
+          - str        →  单条条件
+        返回匹配到的函数列表。
+        """
+        matched = []
+
+        def _flatten(items):
+            """递归展平嵌套条件"""
+            if isinstance(items, str):
+                yield items
+            elif isinstance(items, list):
+                for item in items:
+                    yield from _flatten(item)
+            elif isinstance(items, dict):
+                for val in items.values():
+                    yield from _flatten(val)
+
+        for cond_str in _flatten(condition_list):
+            if not isinstance(cond_str, str) or not cond_str.strip():
+                continue
+            cond_str = cond_str.strip()
+            # 尝试按关键词匹配（优先匹配更长的关键词）
+            for keyword in sorted(cond_map.keys(), key=len, reverse=True):
+                if keyword in cond_str:
+                    matched.append(cond_map[keyword])
+                    break  # 一条条件只匹配一个关键词
+
+        return matched
+
+    def _create_strategy(self, name: str, yaml_config: dict):
+        """从YAML配置创建backtrader策略类（直接返回 BacktestStrategy 即可）"""
+        raw_entry = yaml_config.get("entry_conditions", [])
+        raw_exit = yaml_config.get("exit_conditions", [])
+
+        entry_fns = self._match_conditions(raw_entry, self._COND_ENTRY)
+        exit_fns = self._match_conditions(raw_exit, self._COND_EXIT)
+
+        # 默认保底：如果完全没有匹配到入场条件，使用简单的MA金叉
+        if not entry_fns:
+            entry_fns = [lambda s: s.ma5_cross_ma10[0] > 0]
+        if not exit_fns:
+            exit_fns = [lambda s: s.ma5_cross_ma10[0] < 0]
+
+        # 直接把函数列表塞进 params——无需 exec / 动态类
+        return BacktestStrategy, entry_fns, exit_fns
 
     def run_multi_strategy(
         self,
